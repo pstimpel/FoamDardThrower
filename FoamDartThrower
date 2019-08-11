@@ -1,0 +1,225 @@
+#include <Servo.h>
+
+Servo myservo, esc1, esc2;
+
+volatile int pwm_value = 0;
+volatile int prev_time = 0;
+
+volatile bool isfired=false; 
+volatile bool tofire=false;
+
+int servooffpos=1999; //speed position of servo when off
+int servoonpos=1550; //speed position of servo to fire
+int servowaitmillisecs = 700; //wait between servo movements
+int servopin = 9; //pin of servo
+
+int esc1pin = 5; //esc1 pin
+int esc2pin = 6; //esc2 pin
+int escupwait = 200; //esc time to run up in milliseconds
+volatile int escup=1400; //esc speed value for fire
+int escdown=1000; //esc speed value when off
+int escinit=20; //angle value to init ESCs, to "arm" 
+int escupperlimit = 2000;
+int esclowerlimit = 1350;
+
+bool usetrigger = true; //use the trigger?
+int triggerpin = 4; //pin for fire trigger
+
+int ledpin = 10; //pin for LED
+
+int receiverpin = 2; //pin for PWM input from receiver, bound to Interrupt 0
+
+bool isdebug = false; //false uses ESCs and LED, true uses LED only
+
+//float batterywarning = 6.4;
+//float voltagedividerfactor = 2.0;
+//int piezopin = 12;
+
+void setup() {
+  
+  Serial.begin(9600); //init debug console 
+  
+  
+  myservo.attach(servopin); //attach servo to D9 and init
+  setservospeed(servooffpos);
+
+  pinMode(ledpin, OUTPUT); //init LED
+
+  //pinMode(piezopin, OUTPUT); //init LED
+
+  if(usetrigger==true) {
+    pinMode(triggerpin, INPUT); //init trigger pin
+  } else {
+    attachInterrupt(0, rising, RISING); // when pin D2 goes high, call the rising function
+                                      // D2 translates to interrupt 0
+    
+  }
+  
+  if(isdebug==false) {
+    //attach escs
+    esc1.attach(esc1pin);
+    esc2.attach(esc2pin);
+
+    //arm escs
+    setesc1angle(escinit);
+    setesc2angle(escinit); 
+  }
+}
+ 
+void loop() {
+
+  bool batteryOk = true;
+
+  int sensorValue = analogRead(A7);//read poti, 0-1023  float voltage = sensorValue * (5.0 / 1023.0);
+
+  //int batteryValue = analogRead(A6);//read voltage divider from battery, 1/2 ratio, 0-1023  
+  //float voltage = batteryValue * (5.0 / 1023.0) * voltagedividerfactor;
+  //logValue("voltage", voltage);
+  //if (voltage < batterywarning) {
+  //  //batteryOk=false;
+  //  logString("LOW VOLTAGE!!!");
+  //  //digitalWrite(piezopin, HIGH);
+  //  mydelay(10);
+  //}
+  //digitalWrite(piezopin, LOW);
+  
+  int newescup = map(sensorValue, 0, 1023, 1000, 2000); //map the poti value to a servo value
+ 
+  if(newescup > escupperlimit) { 
+    newescup = escupperlimit; //if poti is above upper esc limit, limit it
+  }
+  if(newescup < esclowerlimit) {
+    newescup = esclowerlimit; //if poti is below lower esc limit, limit it
+  }
+  escup = newescup; //set esc to new value after applying limits
+  logValue("esc value", escup);
+  
+  if(usetrigger==true) {
+    if(digitalRead(triggerpin) == HIGH) {
+      logString("------------>trigger");  
+      tofire=true;
+    } else {
+      
+    }
+  }
+
+  if(tofire==true && isfired==false && batteryOk==true) {
+    logValueBool("tofire", tofire);
+    logValueBool("isfired", isfired);
+    isfired=true;
+    fireSequence();
+    logString("firesequence");  
+    isfired=false;
+    tofire=false;
+  
+  }
+
+  //if(tofire==true && isfired==false && batteryOk==false) {
+  //  isfired=false;
+  //  tofire=false;
+  //  logString("firesequence anorted due battery voltage");
+  //  
+  //  digitalWrite(piezopin, HIGH);
+  //  mydelay(50); 
+  //  digitalWrite(piezopin, LOW);
+  //  
+  //}
+  
+  mydelay(500);
+
+}
+ 
+void rising() {
+  attachInterrupt(0, falling, FALLING);
+  prev_time = micros();
+}
+ 
+void falling() {
+  attachInterrupt(0, rising, RISING);
+  pwm_value = micros()-prev_time; //calculate PWN from input
+  if(pwm_value > 1500) {
+    tofire=true;
+    logString("--------------->pulse");
+  }
+}
+
+void fireSequence() {
+  
+    //fireup ESCs and LED, turn Flywheels high
+    digitalWrite(ledpin, HIGH);
+    if(isdebug==false) {
+      setesc1speed(escup);
+      setesc2speed(escup); 
+      logValue("esc fired", escup);
+    }
+    
+    //wait 0.2 seconds for full rpm
+    //mydelay(escupwait);
+    
+    //fire servo to move foam dart
+    setservospeed(servoonpos);
+
+    //wait for servo to reach final position
+    mydelay(servowaitmillisecs);
+    
+    //reset servo from moving foam dart
+    setservospeed(servooffpos);
+
+    //turn down ESCs and LED
+    digitalWrite(ledpin, LOW);
+    if(isdebug==false) {
+      setesc1angle(escdown);
+      setesc2angle(escdown); 
+    }
+}
+
+void mydelay(long millisecs) {
+  //use delay method free of interrupts, not to interfere with reading PWM values by interrupts
+  for(int i=0;i<millisecs;i++) {
+    delayMicroseconds(1000);
+  }
+}
+
+void setservospeed(int speed) {
+  int angle = map(speed, 1000, 2000, 0, 180);
+  myservo.write(angle);
+  logValue("servo speed", speed);
+}
+
+void setesc1speed(int speed) {
+    int angle = map(speed, 1000, 2000, 0, 180); //Sets servo positions to different speeds 
+    esc1.write(angle);
+    logValue("esc1 speed", speed);
+}
+
+void setesc1angle(int angle) {
+    esc1.write(angle);
+    logValue("esc1 angle", angle);
+}
+
+void setesc2speed(int speed) {
+    int angle = map(speed, 1000, 2000, 0, 180); //Sets servo positions to different speeds 
+    esc2.write(angle);
+    logValue("esc2 speed", speed);
+}
+
+void setesc2angle(int angle) {
+    esc2.write(angle);
+    logValue("esc2 angle", angle);
+}
+
+void logValue(String descriptor, float value) {
+  Serial.print(descriptor);
+  Serial.print(":");
+  Serial.println(value);
+}
+
+void logValueBool(String descriptor, bool value) {
+  Serial.print(descriptor);
+  Serial.print(":");
+  Serial.println(value);
+}
+
+void logString(String text) {
+  Serial.println(text);
+}
